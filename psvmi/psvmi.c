@@ -17,6 +17,7 @@
 
 #include "psvmi_ctx.h"
 
+
 int open_file(struct psvmi_context *ctx, FILE ** fd, char *suffix,
 	      char *mode);
 ul_t phy_mem_offset(ul_t base);
@@ -630,9 +631,9 @@ char *get_filename(struct psvmi_context *ctx, addr_t fd_addr,
 				      phy_mem_offset(dentry_name_addr),
 				      dentry_len));
 			pathname_len += dentry_len;
-			pathname[MAX_PATHNAME_LEN - pathname_len - 1] =
-			    '/';
-			pathname_len += 1;
+			//pathname[MAX_PATHNAME_LEN - pathname_len - 1] =
+			//    '/';
+			//pathname_len += 1;
 
 			READ_ELEM(ctx, &dentry_parent_addr,
 				  (dentry_addr +
@@ -662,6 +663,7 @@ char *get_filename(struct psvmi_context *ctx, addr_t fd_addr,
 }
 
 
+// Some opened files are disk backed files, others are just sockets.
 int get_open_files(struct psvmi_context *ctx, addr_t task_kva,
 		   PyObject ** conn_list, PyObject ** files_list)
 {
