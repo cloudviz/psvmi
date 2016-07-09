@@ -4,21 +4,22 @@ import psutil
 import socket
 import re
 import os
-import signal
-
-suser = namedtuple('suser', ['name', 'terminal', 'host', 'started'])
-sconn = namedtuple('sconn', ['fd', 'family', 'type', 'laddr', 'raddr',
-                             'status', 'pid'])
-sysinfo = namedtuple('OSFeature', ["boottime", "ipaddr", "osdistro",
-                                   "osname", "osplatform", "osrelease",
-                                   "ostype", "osversion", "memory_used",
-                                   "memory_buffered", "memory_cached",
-                                   "memory_free"])
+# import signal
+import base64
+import struct
+import sys
+import warnings
 
 
-class pconn(
-    namedtuple('pconn',
-               ['fd', 'family', 'type', 'laddr', 'raddr', 'status'])):
+suser = namedtuple('suser', 'name terminal host started')
+sconn = namedtuple('sconn', 'fd family type laddr raddr status pid')
+sysinfo = namedtuple('OSFeature',
+                     '''boottime ipaddr osdistro osname osplatform osrelease
+                        ostype osversion memory_used memory_buffered
+                        memory_cached memory_free''')
+
+
+class pconn(namedtuple('pconn', 'fd family type laddr raddr status')):
     __slots__ = ()
 
     @property
@@ -29,28 +30,25 @@ class pconn(
     def remote_address(self):
         return self.raddr
 
-qemuVM = namedtuple('qemuVM', ['memDumpFile', 'numMemChunks',
-                               'qemuPid', 'qemuVaStart',
-                               'qemuVaEnd', 'startMemAddr',
-                               'memSize'])
+qemuVM = namedtuple('qemuVM', '''memDumpFile numMemChunks qemuPid qemuVaStart
+                                 qemuVaEnd startMemAddr memSize''')
 
 # --- namedtuples for psutil.Process methods
 
 # psutil.Process.memory_info()
-pmem = namedtuple('pmem', ['rss', 'vms'])
+pmem = namedtuple('pmem', 'rss vms')
 # psutil.Process.cpu_times()
-pcputimes = namedtuple('pcputimes', ['user', 'system'])
+pcputimes = namedtuple('pcputimes', 'user system')
 # psutil.Process.open_files()
-popenfile = namedtuple('popenfile', ['path', 'fd'])
+popenfile = namedtuple('popenfile', 'path fd')
 # psutil.Process.threads()
-pthread = namedtuple('pthread', ['id', 'user_time', 'system_time'])
+pthread = namedtuple('pthread', 'id user_time system_time')
 # psutil.Process.uids()
-puids = namedtuple('puids', ['real', 'effective', 'saved'])
+puids = namedtuple('puids', 'real effective saved')
 # psutil.Process.gids()
-pgids = namedtuple('pgids', ['real', 'effective', 'saved'])
+pgids = namedtuple('pgids', 'real effective saved')
 # psutil.Process.io_counters()
-pio = namedtuple('pio', ['read_count', 'write_count',
-                         'read_bytes', 'write_bytes'])
+pio = namedtuple('pio', 'read_count write_count read_bytes write_bytes')
 
 
 class Connections:
@@ -97,14 +95,13 @@ class Connections:
         # no end-points connected
         if not port:
             return ()
-        if PY3:
+        if sys.version_info[0] > 2:  # PY3:
             ip = ip.encode('ascii')
         if family == socket.AF_INET:
+            ip = socket.inet_ntop(family, base64.b16decode(ip))
             # see: https://github.com/giampaolo/psutil/issues/201
             if sys.byteorder == 'little':
-                ip = socket.inet_ntop(family, base64.b16decode(ip)[::-1])
-            else:
-                ip = socket.inet_ntop(family, base64.b16decode(ip))
+                ip = ip[::-1]
         else:  # IPv6
             # old version - let's keep it, just in case...
             # ip = ip.decode('hex')
@@ -233,7 +230,7 @@ def get_supported_kernel(version, arch="x86_64"):
                 kernel = f.replace("offsets_", "")
                 arch = dirpath.split('/')[-1]
                 distro = dirpath.split('/')[-2]
-                keyword = version
+                # keyword = version  # unused
                 return [arch, distro, kernel]
     return [None, None, None]
 
@@ -248,7 +245,7 @@ def system_info(qemu_instance=None, qemu_pid=None, kernel_version=None,
                                              vm.qemuPid, vm.qemuVaStart,
                                              vm.qemuVaEnd, vm.startMemAddr,
                                              vm.memSize, sysmaps, offsets))
-    except Exception, e:
+    except Exception as e:
         print("Calling system_info for %s failed with: \"%s\". Most likely "
               "this is not the correct kernel." % (qemu_instance, e))
         return None
@@ -639,7 +636,7 @@ def kernel_version_detection(qemu_instance=None, qemu_pid=None):
     # 1. Extract any string that looks like a kernel version
     picked_versions = []
     string = '' + str
-    version = "no-match"
+    # version = "no-match"  # unused
     longregex = re.compile("(.{1000}[ubuntu\s[2-3]|el[1-9]].{1000})", re.I)
     shortregex = re.compile("\s([2-3]{1}\.[0-9]{1,3}\."
                             "[0-9|\-|\.|generic|virtual|server|el|x|amd|_]{1,100})", re.I)
@@ -653,8 +650,8 @@ def kernel_version_detection(qemu_instance=None, qemu_pid=None):
                         or 'server' in v):
                     picked_versions.append(v)
     else:
-        print "No match!!"
-    print "Picked kernels 1:", picked_versions
+        print("No match!!")
+    print("Picked kernels 1:", picked_versions)
 
     # 2.a Expand the list of potential kernels a bit by removing
     #     the last sub-version string (i.e. "-generic" from
@@ -663,7 +660,7 @@ def kernel_version_detection(qemu_instance=None, qemu_pid=None):
         tmp = re.sub("-[a-zA-Z]+", "", picked_version)
         if tmp not in picked_versions:
             picked_versions.append(tmp)
-    print "Picked kernels 2:", picked_versions
+    print("Picked kernels 2:", picked_versions)
 
     # 2.b Expand the list of potential kernels by removing some
     #     part of the version name. This is required because
@@ -674,7 +671,7 @@ def kernel_version_detection(qemu_instance=None, qemu_pid=None):
                      r"\1", picked_version)
         if tmp not in picked_versions:
             picked_versions.append(tmp)
-    print "Picked kernels 3:", picked_versions
+    print("Picked kernels 3:", picked_versions)
 
     # 3. Try to get offset and map files for the picked kernels
     supported_versions = []
@@ -683,16 +680,16 @@ def kernel_version_detection(qemu_instance=None, qemu_pid=None):
         if supported_version:
             supported_versions.append([supported_version, arch,
                                        distro, picked_version])
-    print "Picked and supported kernels:"
+    print("Picked and supported kernels:")
     for supported_version in supported_versions:
-        print supported_version
+        print(supported_version)
 
     # 4. Now check that offset and map to see if the kernel version
     #    string at the expected position is the expected value.
     for supported_version, arch, distro, picked_version in supported_versions:
         sys = system_info(qemu_instance, qemu_pid,
                           supported_version, distro, arch)
-        if sys == None:
+        if not sys:
             continue
         if (supported_version in sys.osname or picked_version in sys.osname or
                 supported_version in sys.osrelease or picked_version in sys.osrelease):
