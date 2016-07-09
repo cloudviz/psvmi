@@ -10,6 +10,6 @@ INSTANCE = "25738"
 KERNEL_VERSION = '{0}_{1}.{2}'.format(KERNEL, KERNEL_LONG, ARCH)
 
 for p in psvmi.process_iter(qemu_pid=INSTANCE, kernel_version=KERNEL_VERSION, distro='ubuntu', arch=ARCH):
-    print p.name(), p.pid, p.get_connections(), p.get_open_files()
-print
-print psvmi.system_info(qemu_pid=INSTANCE, kernel_version=KERNEL_VERSION, distro='ubuntu', arch=ARCH)
+    print(p.name(), p.pid, p.get_connections(), p.get_open_files())
+print('')
+print(psvmi.system_info(qemu_pid=INSTANCE, kernel_version=KERNEL_VERSION, distro='ubuntu', arch=ARCH))
