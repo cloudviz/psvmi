@@ -1,3 +1,3 @@
 test:
 	docker build -t psvmi:test -f Dockerfile.test .
-	docker run -it psvmi:test bash tests/test.sh
+	docker run -it --privileged psvmi:test bash tests/test.sh
