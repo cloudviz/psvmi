@@ -1,1 +1,5 @@
-.
+Quick test
+==========
+```
+make test
+```
