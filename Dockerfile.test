@@ -1,0 +1,21 @@
+FROM alpine
+
+RUN apk update && \
+    apk add bash \
+        qemu-system-x86_64 \
+        python gcc \
+        make \
+        musl-dev \
+        python-dev \
+        linux-headers
+
+COPY psvmi psvmi
+RUN (cd psvmi; python setup.py build && python setup.py install)
+
+COPY maps maps
+COPY offsets offsets
+
+# TODO(ricarkol): move this away
+ADD header.h .
+
+COPY tests tests

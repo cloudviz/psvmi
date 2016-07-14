@@ -1,6 +1,5 @@
 import _psvmi as cext
 from collections import namedtuple
-import psutil
 import socket
 import re
 import os
@@ -125,17 +124,10 @@ class Connections:
 
 def qemu_vm_info(qemu_instance=None, qemuPid=None):
     if not qemu_instance and not qemuPid:
-        raise TypeError("Need to specify a qemu instance or pid.")
+        raise TypeError("Need to specify a qemu instance pid.")
 
     if not qemuPid:
-        # Get info about the qemu process
-        for p in psutil.process_iter():
-            name = p.name() if hasattr(p.name, '__call__') else p.name
-            name = name.lower()
-            if "qemu" in name:
-                cmd = p.cmdline() if hasattr(p.cmdline, '__call__') else p.cmdline
-                if qemu_instance in cmd:
-                    qemuPid = "%d" % p.pid
+        raise NotImplementedError("We only support PIDs")
 
     if not qemuPid:
         raise Exception("Could not find the VM.")
