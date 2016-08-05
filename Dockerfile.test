@@ -1,13 +1,12 @@
-FROM alpine
+FROM ubuntu:14.04
 
-RUN apk update && \
-    apk add bash \
-        qemu-system-x86_64 \
+RUN apt-get update && \
+    echo "y" | apt-get install bash \
+        qemu-kvm \
         python gcc \
         make \
-        musl-dev \
         python-dev \
-        linux-headers
+        vim 
 
 COPY psvmi psvmi
 RUN (cd psvmi; python setup.py build && python setup.py install)

@@ -41,7 +41,9 @@
 enum OFFSETS {
 	START_OFFSETS,
 
-	NS_UTSNAME_OFFSET,
+    CONFIG_HZ,
+	
+    NS_UTSNAME_OFFSET,
 	NEW_UTSNAME_LEN,
 
 	CPUINFO_FAMILY_OFFSET,
@@ -240,7 +242,7 @@ int log_nw_info = FALSE;
  */
 #define KERN1			0xffffffff80000000
 // CONFIG_HZ=1000 in linux build config file
-#define CONFIG_HZ		1000
+//#define CONFIG_HZ		1000
 
 typedef int s32;
 typedef unsigned int u32;

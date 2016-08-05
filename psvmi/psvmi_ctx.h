@@ -8,13 +8,10 @@
 struct psvmi_context {
 	FILE *fd;
 	char *hostname;
+    char* kernel_version;
 	char ip_addr_str[16];
 	unsigned int num_cores;
 	u64 mem_size;
-	ul_t total_ram_pages;
-	ul_t free_ram_pages;
-	ul_t buffered_pages;
-	ul_t cached_pages;
 	ul_t *per_cpu_offset;
 	int *sym_val;
 	addr_t *sym_addr;
@@ -26,6 +23,10 @@ struct psvmi_context {
 	int num_symbols;
 	PyObject *ret_list;
 	PyObject *sysinfo;
+    PyObject *ipaddr_list;
+    PyObject *interface_list;
+    PyObject *module_list;
+    PyObject *cpuHwinfo;
 };
 
 #endif
