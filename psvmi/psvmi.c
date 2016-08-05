@@ -13,10 +13,13 @@
 #include <sys/sysinfo.h>
 #include <stdio.h>
 
-#define USE_PTRACE	1
+#define USE_PTRACE	0
 
 #include "psvmi_ctx.h"
 
+int get_cpu_info(struct psvmi_context *ctx);
+int get_os_info(struct psvmi_context *ctx, PyObject ** sysinfo,
+		PyObject * addr_list);
 
 int open_file(struct psvmi_context *ctx, FILE ** fd, char *suffix,
 	      char *mode);
@@ -36,6 +39,7 @@ void psvmi_context_init(struct psvmi_context *ctx,
 			PyObject * sys_map_list, PyObject * offset_list)
 {
 	ctx->hostname = NULL;
+    ctx->kernel_version = NULL;
 	//ctx->ip_addr_str = {'\0'};
 	ctx->per_cpu_offset = NULL;
 	ctx->last_inode_addr = 0;
@@ -51,6 +55,9 @@ void psvmi_context_init(struct psvmi_context *ctx,
 
 	// should dec the reference if there is an error
 	ctx->ret_list = PyList_New(0);
+    ctx->ipaddr_list = NULL;
+    ctx->interface_list = NULL;
+    ctx->module_list = NULL;
 
 	ctx->qemu_pid = atoi(qemu_pid);
 	ctx->qemu_va_start = (u64) atol(qemu_va_start);
@@ -80,12 +87,80 @@ void psvmi_context_init(struct psvmi_context *ctx,
 		ctx->sym_val[i] = atoi(PyString_AsString(strObj));
 	}
 
+    /*
+    //with the version that reuses 'context', ptrace attach/detach would need to be made before
+    //each individual fxn call and should't be here.
 #if USE_PTRACE == TRUE
 	ptrace(PTRACE_ATTACH, ctx->qemu_pid, NULL, NULL);
 	waitpid(ctx->qemu_pid, NULL, 0);
 #endif
+    */
 }
 
+static PyObject* psvmi_context_init_wrapper(PyObject * self, PyObject * args)
+{
+	struct psvmi_context* ctx = malloc (sizeof(struct psvmi_context));
+    char *mem_dump_file;
+    char *num_mem_chunks;
+    char *qemu_pid;
+    char *qemu_va_start;
+    char *qemu_va_end;
+    char *start_mem_addr;
+    char *mem_size;
+    PyObject *sys_map_list; /* the list of strings */
+    PyObject *offset_list;  /* the list of strings */
+
+    if (!PyArg_ParseTuple
+        (args, "sssssssOO", &mem_dump_file, &num_mem_chunks, &qemu_pid,
+         &qemu_va_start, &qemu_va_end, &start_mem_addr, &mem_size,
+         &sys_map_list, &offset_list)) {
+        return NULL;
+    }
+
+
+	psvmi_context_init(ctx, mem_dump_file, num_mem_chunks,
+			   qemu_pid, qemu_va_start, qemu_va_end,
+			   start_mem_addr, mem_size, sys_map_list,
+			   offset_list);
+	
+	// Create a capsule containing the context
+    //PyObject* ctx1 = PyCapsule_New((void *)ctx, "ctx_wrapper", NULL);
+    PyObject* ctx1 = PyCapsule_New((void *)ctx, NULL, NULL);
+
+    /*
+	//needed if ctx is to be reused across calls
+#if USE_PTRACE == TRUE
+    ptrace(PTRACE_DETACH, ctx->qemu_pid, NULL, NULL);
+#endif
+    */
+	return ctx1;
+}
+
+struct psvmi_context* psvmi_get_context(PyObject* args)
+{
+    PyObject* ctx1;
+    struct psvmi_context* ctx;
+    
+    if(!PyArg_ParseTuple(args, "O", &ctx1))
+        return NULL;
+
+    //ctx = (struct psvmi_context*) PyCapsule_GetPointer(ctx1,"ctx_wrapper");
+    ctx = (struct psvmi_context*) PyCapsule_GetPointer(ctx1,NULL);
+
+#if USE_PTRACE == TRUE
+	ptrace(PTRACE_ATTACH, ctx->qemu_pid, NULL, NULL);
+	waitpid(ctx->qemu_pid, NULL, 0);
+#endif
+ 
+    return ctx;
+}
+
+void psvmi_release_context(struct psvmi_context *ctx)
+{
+#if USE_PTRACE == TRUE
+    ptrace(PTRACE_DETACH, ctx->qemu_pid, NULL, NULL);
+#endif
+}
 
 void psvmi_context_destroy(struct psvmi_context *ctx)
 {
@@ -222,6 +297,10 @@ int get_module_list(struct psvmi_context *ctx)
 	addr_t highmem_pa, highmem_va;
 	const char *module_state_str;
 
+    //TODO: maybe free the previous list if creating a new one?
+    if(ctx->module_list == NULL)
+            ctx->module_list = PyList_New(0);
+
 	READ_ELEM(ctx, &modules_list, (ctx->sym_addr[MODULES]));
 
 	while (1) {
@@ -256,7 +335,13 @@ int get_module_list(struct psvmi_context *ctx)
 			      ctx->sym_val[LIST_HEAD_OFFSET],
 			      sizeof(modules_list)));
 
-		if (modules_list.next == ctx->sym_addr[MODULES]) {
+
+        PyObject *module = 
+            Py_BuildValue("ss", module_name, module_state_str);
+        
+        PyList_Append(ctx->module_list, module); 
+		
+        if (modules_list.next == ctx->sym_addr[MODULES]) {
 			break;
 		}
 	}
@@ -341,19 +426,21 @@ char *make_ip_addr_str(unsigned int ip)
 	bytes[1] = (ip >> 8) & 0xFF;
 	bytes[2] = (ip >> 16) & 0xFF;
 	bytes[3] = (ip >> 24) & 0xFF;
-	sprintf(ip_addr_str, "%d.%d.%d.%d", bytes[3], bytes[2], bytes[1],
-		bytes[0]);
+	//sprintf(ip_addr_str, "%d.%d.%d.%d", bytes[3], bytes[2], bytes[1],
+	//	bytes[0]);
+	sprintf(ip_addr_str, "%d.%d.%d.%d", bytes[0], bytes[1], bytes[2],
+		bytes[3]);
 	return ip_addr_str;
 }
 
 
 // virtio_net driver
-int get_virtio_net_stats(struct psvmi_context *ctx, addr_t net_device_addr)
+int get_virtio_net_stats(struct psvmi_context *ctx, addr_t net_device_addr, char* dev_name)
 {
 	addr_t virtnet_info_addr, virtnet_statsrc_addr,
 	    per_cpu_virtnet_statsrc_addr;
 	u64 tx_bytes = 0, tx_packets = 0, rx_bytes = 0, rx_packets =
-	    0, tmp_ctr = 0;
+	    0, tmp_ctr = 0, errout = -1, errin = -1;
 	int i = 0;
 
 	virtnet_info_addr =
@@ -361,6 +448,9 @@ int get_virtio_net_stats(struct psvmi_context *ctx, addr_t net_device_addr)
 	READ_ELEM(ctx, &virtnet_statsrc_addr,
 		  virtnet_info_addr +
 		  ctx->sym_val[VIRTNET_INFO_VIRTNET_STATS_OFFSET]);
+
+    if(ctx->per_cpu_offset == NULL)
+        get_cpu_info(ctx);
 
 	for (i = 0; i < ctx->num_cores; i++) {
 		per_cpu_virtnet_statsrc_addr =
@@ -384,16 +474,20 @@ int get_virtio_net_stats(struct psvmi_context *ctx, addr_t net_device_addr)
 		rx_packets += tmp_ctr;
 	}
 
+    PyObject *iface_stat = 
+        Py_BuildValue("siiiiii", dev_name, tx_bytes, rx_bytes, tx_packets, rx_packets, errout, errin);
+    
+    PyList_Append(ctx->interface_list, iface_stat); 
 	return 0;
 }
 
 
 // 8139cp driver
 int get_generic_net_stats(struct psvmi_context *ctx,
-			  addr_t net_device_addr)
+			  addr_t net_device_addr, char* dev_name)
 {
 	addr_t statsrc_addr;
-	ul_t tx_bytes = 0, tx_packets = 0, rx_bytes = 0, rx_packets = 0;
+	ul_t tx_bytes = 0, tx_packets = 0, rx_bytes = 0, rx_packets = 0, errout = -1, errin = -1;
 
 	statsrc_addr =
 	    net_device_addr + ctx->sym_val[NET_DEVICE_STATS_OFFSET];
@@ -409,11 +503,16 @@ int get_generic_net_stats(struct psvmi_context *ctx,
 	READ_ELEM(ctx, &tx_bytes,
 		  statsrc_addr + ctx->sym_val[STATS_TX_BYTES_OFFSET]);
 
-	return 0;
+    
+    PyObject *iface_stat = 
+        Py_BuildValue("siiiiii", dev_name, tx_bytes, rx_bytes, tx_packets, rx_packets, errout, errin);
+    
+    PyList_Append(ctx->interface_list, iface_stat); 
+    return 0;
 }
 
 
-int get_network_info(struct psvmi_context *ctx, PyObject * addr_list)
+int get_network_info(struct psvmi_context *ctx, /*unused*/PyObject* addr_list)
 {
 
 	struct double_link dev_base_list_head, dev_list;
@@ -424,7 +523,13 @@ int get_network_info(struct psvmi_context *ctx, PyObject * addr_list)
 	char *dev_addr;
 	unsigned int ip_addr, mask_addr, broadcast_addr;
 
-	dev_base_list_head_addr =
+    //if(ctx->ipaddr_list == NULL)
+        ctx->ipaddr_list = PyList_New(0);
+
+    //if(ctx->interface_list == NULL)
+        ctx->interface_list = PyList_New(0);
+	
+    dev_base_list_head_addr =
 	    ctx->sym_addr[INIT_NET] +
 	    ctx->sym_val[NET_DEV_BASE_LIST_HEAD_OFFSET];
 	READ_ELEM(ctx, &dev_base_list_head, dev_base_list_head_addr);
@@ -484,17 +589,29 @@ int get_network_info(struct psvmi_context *ctx, PyObject * addr_list)
 			PyObject *addr = NULL;
 			addr =
 			    Py_BuildValue("s", make_ip_addr_str(ip_addr));
-			PyList_Append(addr_list, addr);
+			PyList_Append(ctx->ipaddr_list, addr);
 
 			READ_ELEM(ctx, &if_addr,
 				  if_addr +
 				  ctx->sym_val[IFADDR_NEXT_OFFSET]);
 		}
 
-		//if(ctx->sym_val[NET_DEVICE_STATS_OFFSET] == -1)
-		//      get_virtio_net_stats(ctx, net_device_addr);
-		//else
-		//      get_generic_net_stats(ctx, net_device_addr);
+
+        //TODO: stats for loopback device (when not 0!) cannot be extracted by the 
+        //current offsets. Need virtio style tricks for this. 
+        //essentially, e.g. tx_bytes = sum(all cpus) lb_stats->bytes where
+        //lb_stats = per_cpu_ptr(dev->lstats, i);
+        //and dev = struct net_device* dev
+
+        //TODO:this selection should actually depend upon which driver is loaded 
+        //and not solely on which offsets are provided!
+        //this can be figured out from the caller script by looking at
+        //qemu process' flags (From ps)
+
+        if(ctx->sym_val[NET_DEVICE_STATS_OFFSET] == -1)
+		      get_virtio_net_stats(ctx, net_device_addr, dev_name);
+		else
+		      get_generic_net_stats(ctx, net_device_addr, dev_name);
 
 		READ_ELEM(ctx, &dev_list,
 			  net_device_addr +
@@ -793,7 +910,7 @@ char *get_full_command(struct psvmi_context *ctx, ul_t start_addr,
 
 
 int get_process_memory_info(struct psvmi_context *ctx, addr_t task_kva,
-			    PyObject ** command)
+			    PyObject ** command, ul_t *mem_vms, ul_t* mem_rss)
 {
 	addr_t mm_addr, vma_addr, pgd_addr, vma_next_addr,
 	    vma_prev_addr, vma_file_addr, inode_addr, last_inode_addr =
@@ -803,6 +920,9 @@ int get_process_memory_info(struct psvmi_context *ctx, addr_t task_kva,
 	char *full_cmd_str;
 	char *filename;
 	l_t rss_stat[ctx->sym_val[NR_MM_COUNTERS]], rss_pages = 0, i = 0;
+
+    *mem_vms = 0;
+    *mem_rss = 0;
 
 	ctx->last_inode_addr = last_inode_addr;
 	READ_ELEM(ctx, &mm_addr,
@@ -820,6 +940,8 @@ int get_process_memory_info(struct psvmi_context *ctx, addr_t task_kva,
 
 		READ_ELEM(ctx, &total_vm_pages,
 			  (mm_addr + ctx->sym_val[MM_TOTAL_VM_OFFSET]));
+        
+        *mem_vms = total_vm_pages * PAGE_SIZE;
 
 		READ_ELEM1(ctx, rss_stat,
 			   (mm_addr + ctx->sym_val[MM_RSS_OFFSET]));
@@ -833,6 +955,8 @@ int get_process_memory_info(struct psvmi_context *ctx, addr_t task_kva,
 		for (i = 0, rss_pages = 0;
 		     i < ctx->sym_val[NR_MM_COUNTERS] - 1; i++)
 			rss_pages += (rss_stat[i] < 0 ? 0 : rss_stat[i]);
+
+        *mem_rss = rss_pages * PAGE_SIZE;     
 
 		full_cmd_str =
 		    get_full_command(ctx, arg_start_addr, arg_end_addr,
@@ -906,6 +1030,84 @@ int get_process_sched_cpu_info(struct psvmi_context *ctx, addr_t task_addr)
 	return 0;
 }
 
+int correct_cputime_units(struct psvmi_context *ctx, l_t *process_cpu_time)
+{
+    //units of stime and utime changed from being jiffies to nanoseconds
+    //https://lwn.net/Articles/623381/
+    //so special cases to send jiffies back for easier cpu util calc inside py callers
+    //i.e. psvmi or agentlessCrawler
+    
+    //this is only true for kernel versions >=3.15 (aug 2014 onwards) and ofcours 3.13 LTS
+    //two options: 
+    //1. based on kernel version read as input from caller
+    //or a more stable option: i
+    //2. if caller finds /include/linux/cputime.h in then do following else you got jiffies directly
+    //if (process_cpu_time >= overall_cpu_time)
+    
+    //XXX: ugly hack, true only for ubuntu :(
+    
+    
+    get_os_info(ctx, NULL, NULL);
+    if (ctx->kernel_version == NULL)
+    {    
+        *process_cpu_time = -1; //safety first
+        return -1;
+    }
+
+    //string tokenization here
+    char *token = NULL;
+    char* _myStr = ctx->kernel_version;
+    int tokenInt[2]={0};
+    int i = 0;
+    for(i=0; i<2; i++)
+    {
+        token = strtok(_myStr, ".");
+        if(token == NULL)
+        {
+            *process_cpu_time = -1; //safety first
+            return -1;
+        }
+        tokenInt[i] = atoi(token);
+        _myStr = NULL;
+    }
+
+    int major_kernel_version = tokenInt[0], minor_kernel_version = tokenInt[1];
+  
+    //essentially playing it safe, not supporting 3.13 3.14
+    //could do better, for ex. get_os_info can also tell if its ubuntu/fedora etc. 
+    //so can be more specific (more ugly_ in this hack
+
+    int cputime_to_jiffies = FALSE;
+    switch(major_kernel_version)
+    {
+        case 2: 
+                break;
+        case 3:
+                if(minor_kernel_version == 13 || minor_kernel_version == 14)
+                    *process_cpu_time = -1;
+
+                if(minor_kernel_version >=15)
+                    cputime_to_jiffies = TRUE;
+
+                break;    
+        case 4: 
+                cputime_to_jiffies = TRUE;
+                break;
+        default:   *process_cpu_time = -1;        
+                    break;
+    }
+
+    if(cputime_to_jiffies == TRUE)
+    {
+        //nanoseconds -> jiffies
+        if(ctx->sym_val[CONFIG_HZ] == -1)
+            *process_cpu_time = -1;    //can't convert without HZ value!
+        else
+            *process_cpu_time = *process_cpu_time * ctx->sym_val[CONFIG_HZ] / 1000000000;
+    }
+    return 0;
+}
+
 
 int get_task_list(struct psvmi_context *ctx)
 {
@@ -914,7 +1116,21 @@ int get_task_list(struct psvmi_context *ctx)
 	unsigned int pid, ppid;
 	char task_name[ctx->sym_val[TASK_COMM_LEN]];
 	int exit_state = 0;
+    ul_t state = 0; //TASK_RUNNING    
+    ul_t mem_vms = 0, mem_rss = 0;
 	PyObject *tuple = NULL;
+    u64 overall_cpu_time = 0;
+    ul_t stime = 0, utime = 0;
+    l_t process_cpu_time = 0;
+    ul_t startTime[2] = {0};
+
+    ctx->ret_list = PyList_New(0);
+
+    if (ctx->sym_addr[JIFFIES_64] != -1)
+    {
+        READ_ELEM(ctx, &overall_cpu_time,
+            ctx->sym_addr[JIFFIES_64]);
+    }
 
 	READ_ELEM(ctx, &task_list,
 		  (ctx->sym_addr[INIT_TASK] +
@@ -934,10 +1150,10 @@ int get_task_list(struct psvmi_context *ctx)
 
 	//kva: kernel virtual address
 
-	tuple = Py_BuildValue("(isssdsisOO)", pid, task_name,
-			      "unknown", "unknown", 1.0, "unknown",
+	tuple = Py_BuildValue("(isssksisOOiiilk)", pid, task_name,
+			      "unknown", "unknown", startTime[0], "unknown",
 			      ppid, "unknown", PyList_New(0),
-			      PyList_New(0));
+			      PyList_New(0), mem_rss, mem_vms, state, process_cpu_time, overall_cpu_time);
 	PyList_Append(ctx->ret_list, tuple);
 	Py_DECREF(tuple);
 
@@ -951,6 +1167,12 @@ int get_task_list(struct psvmi_context *ctx)
 		if (task_addr == ctx->sym_addr[INIT_TASK])
 			break;
 
+        if (ctx->sym_val[STATE_OFFSET] != -1)
+        {    
+		    READ_ELEM(ctx, &state,
+			    (task_addr + ctx->sym_val[STATE_OFFSET]));
+        }
+
 		READ_ELEM(ctx, &pid,
 			  (task_addr + ctx->sym_val[PID_OFFSET]));
 
@@ -961,6 +1183,17 @@ int get_task_list(struct psvmi_context *ctx)
 
 		READ_ELEM1(ctx, task_name,
 			   (task_addr + ctx->sym_val[COMM_OFFSET]));
+
+        //cpu time only being accounted for a process, not its threads
+        //for multi threaded procs, need to add utime and stime from threads as well
+        //need offset for  thread_group structure inside task_struct
+        READ_ELEM(ctx, &utime, task_addr + ctx->sym_val[TASK_UTIME_OFFSET]);
+        READ_ELEM(ctx, &stime, task_addr + ctx->sym_val[TASK_STIME_OFFSET]);
+        process_cpu_time = utime + stime;
+  
+        correct_cputime_units(ctx, &process_cpu_time);
+        
+        READ_ELEM(ctx, &startTime, task_addr + ctx->sym_val[TASK_START_TIME_OFFSET]);
 
 		if (ctx->sym_val[EXITSTATE_OFFSET] != -1)
 			READ_ELEM(ctx, &exit_state,
@@ -978,16 +1211,16 @@ int get_task_list(struct psvmi_context *ctx)
 			// exit_state != 0 => task is zombie (16) / dead (32)
 			get_open_files(ctx, task_addr, &conn_list,
 				       &files_list);
-			get_process_memory_info(ctx, task_addr, &command);
+			get_process_memory_info(ctx, task_addr, &command, &mem_vms, &mem_rss);
 			get_process_sched_cpu_info(ctx, task_addr);
 		}
 		if (command == NULL)
 			command = Py_BuildValue("s", "unknown");
 
-		tuple = Py_BuildValue("(isOsdsisOO)", pid, task_name,
-				      command, "unknown", 1.0, "unknown",
+		tuple = Py_BuildValue("(isOsksisOOiiilk)", pid, task_name,
+				      command, "unknown", startTime[0], "unknown",
 				      ppid, "unknown", conn_list,
-				      files_list);
+				      files_list, mem_rss, mem_vms, state, process_cpu_time, overall_cpu_time);
 		PyList_Append(ctx->ret_list, tuple);
 		Py_DECREF(tuple);
 
@@ -1024,7 +1257,6 @@ int get_cpu_info(struct psvmi_context *ctx)
 {
 	//short unsigned int ctx->num_cores;
 	unsigned int cpu_khz, cpu_cache_size_kb;
-	//ul_t total_ram_pages, free_ram_pages;
 	unsigned char cpu_family, cpu_vendor, cpu_model;
 	char cpu_vendor_id[16], cpu_model_id[64];
 	u64 cpu_time = 0;
@@ -1054,16 +1286,6 @@ int get_cpu_info(struct psvmi_context *ctx)
 	//         ctx->sym_val[CPUINFO_MAX_CORES_OFFSET]));
 
 	READ_ELEM(ctx, &ctx->num_cores, (ctx->sym_addr[NUM_PROCESSORS]));
-	READ_ELEM(ctx, &ctx->total_ram_pages,
-		  (ctx->sym_addr[TOTALRAM_PAGES]));
-	READ_ELEM(ctx, &ctx->free_ram_pages,
-		  (ctx->sym_addr[VM_STAT] +
-		   ctx->sym_val[VM_STAT_FREE_PAGES_OFFSET]));
-	READ_ELEM(ctx, &ctx->buffered_pages,
-		  (ctx->sym_addr[VM_STAT] + sizeof(long) * NR_FILE_PAGES));
-	READ_ELEM(ctx, &ctx->cached_pages,
-		  (ctx->sym_addr[VM_STAT] +
-		   sizeof(long) * NR_ACTIVE_FILE));
 
 	ctx->per_cpu_offset =
 	    (ul_t *) malloc(sizeof(ul_t) * ctx->num_cores);
@@ -1073,6 +1295,16 @@ int get_cpu_info(struct psvmi_context *ctx)
 		      sizeof(ul_t) * ctx->num_cores));
 
 	READ_ELEM(ctx, &cpu_time, ctx->sym_addr[JIFFIES_64]);
+	
+    ctx->cpuHwinfo = Py_BuildValue("(bbbssiii)",
+				 cpu_family,
+				 cpu_vendor,
+                 cpu_model,
+                 cpu_vendor_id,
+                 cpu_model_id,
+				 cpu_khz,
+				 cpu_cache_size_kb,
+                 ctx->num_cores);
 
 	return 0;
 }
@@ -1081,18 +1313,20 @@ int get_cpu_info(struct psvmi_context *ctx)
 int get_os_info(struct psvmi_context *ctx, PyObject ** sysinfo,
 		PyObject * addr_list)
 {
+
+//TODO: why do we need these hardcoded sizes here, NEW_UTSNAME_LEN is already 64 from the offsets file, and that should suffice: Ohttp://lxr.free-electrons.com/source/include/uapi/linux/utsname.h#L24
 #define UTS_MAX_NAME_SIZE		65
 #define UTS_MAX_OSNAME_SIZE 	132
 
 	unsigned char uts_name[ctx->sym_val[NEW_UTSNAME_LEN] + 1];
 	int i = 0;
 	int num_uts_name_elems = 6;
-	char sysname[UTS_MAX_NAME_SIZE];
-	char nodename[UTS_MAX_NAME_SIZE];
-	char release[UTS_MAX_NAME_SIZE];
-	char version[UTS_MAX_NAME_SIZE];
-	char machine[UTS_MAX_NAME_SIZE];
-	char osname[UTS_MAX_OSNAME_SIZE];
+	char sysname[UTS_MAX_NAME_SIZE]={0};
+	char nodename[UTS_MAX_NAME_SIZE]={0};
+	char release[UTS_MAX_NAME_SIZE]={0};
+	char version[UTS_MAX_NAME_SIZE]={0};
+	char machine[UTS_MAX_NAME_SIZE]={0};
+	char osname[UTS_MAX_OSNAME_SIZE]={0};
 
 	for (i = 0; i < num_uts_name_elems; i++) {
 		READ_ELEM1(ctx, uts_name, (ctx->sym_addr[INIT_UTS_NS] +
@@ -1120,6 +1354,7 @@ int get_os_info(struct psvmi_context *ctx, PyObject ** sysinfo,
 		case 2:
 			strncpy(release, (char *) uts_name,
 				UTS_MAX_NAME_SIZE - 1);
+            ctx->kernel_version = release;
 			break;
 		case 3:
 			strncpy(version, (char *) uts_name,
@@ -1129,12 +1364,15 @@ int get_os_info(struct psvmi_context *ctx, PyObject ** sysinfo,
 			strncpy(machine, (char *) uts_name,
 				UTS_MAX_NAME_SIZE - 1);
 			break;
+		// ignoring case 5:domainname
 		default:
 			break;
 		}
 	}
 
-	*sysinfo = Py_BuildValue("(sOssssssiiii)",
+    if(sysinfo != NULL)
+    {
+	    *sysinfo = Py_BuildValue("(sOssssss)",//iiii)",
 				 "unknown",
 				 addr_list,
 				 "unknown",
@@ -1142,19 +1380,62 @@ int get_os_info(struct psvmi_context *ctx, PyObject ** sysinfo,
 				 machine,
 				 release,
 				 sysname,
-				 version,
-				 (ctx->total_ram_pages -
-				  ctx->free_ram_pages) * PAGE_SIZE_KB,
-				 ctx->buffered_pages * PAGE_SIZE_KB,
-				 ctx->cached_pages * PAGE_SIZE_KB,
-				 ctx->free_ram_pages * PAGE_SIZE_KB);
-
+				 version);
+    }
 	return 0;
 }
 
+int get_system_memory_info(struct psvmi_context *ctx, PyObject ** meminfo)
+{
+	ul_t total_ram_pages=0, free_ram_pages=0, buffered_pages=0, cached_pages=0;
+	
+    READ_ELEM(ctx, &total_ram_pages,
+		  (ctx->sym_addr[TOTALRAM_PAGES]));
+	READ_ELEM(ctx, &free_ram_pages,
+		  (ctx->sym_addr[VM_STAT] +
+		   ctx->sym_val[VM_STAT_FREE_PAGES_OFFSET]));
+
+    /*
+    //XXX: the following don't map to /proc/meminfo's defintion of buffered/cached
+    //which is what psutil uses     
+	READ_ELEM(ctx, &buffered_pages,
+		  (ctx->sym_addr[VM_STAT] + sizeof(long) * NR_FILE_PAGES));
+	READ_ELEM(ctx, &cached_pages,
+		  (ctx->sym_addr[VM_STAT] +
+		   sizeof(long) * NR_ACTIVE_FILE));
+    */
+
+    //until the proper offsets are figured out
+    buffered_pages = -1;
+    cached_pages = -1;
+    
+    *meminfo = Py_BuildValue("(iiiii)",
+                 total_ram_pages * PAGE_SIZE_KB,
+                 (total_ram_pages -
+                 free_ram_pages) * PAGE_SIZE_KB,
+                 buffered_pages * PAGE_SIZE_KB,
+                 cached_pages * PAGE_SIZE_KB,
+                 free_ram_pages * PAGE_SIZE_KB);
+
+    return 0;             
+}
 
 // https://code.google.com/p/psutil/source/browse/psutil/_psutil_linux.c
 static PyObject *psvmi_get_processes(PyObject * self, PyObject * args)
+{
+    struct psvmi_context* ctx = psvmi_get_context(args);
+
+    if (ctx == NULL) return NULL;
+
+	get_task_list(ctx);
+
+    psvmi_release_context(ctx);
+
+	return ctx->ret_list;
+}
+
+// https://code.google.com/p/psutil/source/browse/psutil/_psutil_linux.c
+static PyObject *psvmi_get_processes_deprecated(PyObject * self, PyObject * args)
 {
 	struct psvmi_context ctx;
 	char *mem_dump_file;
@@ -1237,10 +1518,9 @@ static PyObject *psvmi_read_mem_as_text(PyObject * self, PyObject * args)
 }
 
 
-
 // https://code.google.com/p/psutil/source/browse/psutil/_psutil_linux.c
 
-static PyObject *psvmi_system_info(PyObject * self, PyObject * args)
+static PyObject *psvmi_system_info_deprecated(PyObject * self, PyObject * args)
 {
 	struct psvmi_context ctx;
 	char *mem_dump_file;
@@ -1269,7 +1549,7 @@ static PyObject *psvmi_system_info(PyObject * self, PyObject * args)
 
 	PyObject *addr_list = PyList_New(0);
 
-	// get_cpu_info(&ctx);
+	 get_cpu_info(&ctx);
 	/*
 	 * XXX
 	 * addr_list is passed so get_os_info can pack the pyobject
@@ -1291,14 +1571,103 @@ static PyObject *psvmi_system_info(PyObject * self, PyObject * args)
 	return NULL;
 }
 
+static PyObject *psvmi_system_info(PyObject * self, PyObject * args)
+{
+	struct psvmi_context* ctx = psvmi_get_context(args);
+
+    if (ctx == NULL) return NULL;
+
+    if(ctx->ipaddr_list == NULL)
+        get_network_info(ctx, /*arg unused*/ctx->ipaddr_list);
+
+	get_os_info(ctx, &(ctx->sysinfo), ctx->ipaddr_list);
+
+    psvmi_release_context(ctx);
+
+	return ctx->sysinfo;
+
+}
+
+static PyObject *psvmi_cpuHw_info(PyObject * self, PyObject * args)
+{
+	struct psvmi_context* ctx = psvmi_get_context(args);
+
+    if (ctx == NULL) return NULL;
+
+	get_cpu_info(ctx);
+
+    psvmi_release_context(ctx);
+
+	return ctx->cpuHwinfo;
+
+}
+
+static PyObject *psvmi_module_list(PyObject * self, PyObject * args)
+{
+	struct psvmi_context* ctx = psvmi_get_context(args);
+
+    if (ctx == NULL) return NULL;
+
+    get_module_list(ctx);
+
+    psvmi_release_context(ctx);
+
+	return ctx->module_list;
+
+}
+
+static PyObject *psvmi_interface_list(PyObject * self, PyObject * args)
+{
+	struct psvmi_context* ctx = psvmi_get_context(args);
+
+    if (ctx == NULL) return NULL;
+
+    //stats could have changed in succesive iterations so need to re-crawl
+    //ideally need to re-crawl only stats instead of everything
+    //if(ctx->interface_list == NULL)
+        get_network_info(ctx, /*arg unused*/ctx->ipaddr_list);
+
+    psvmi_release_context(ctx);
+
+	return ctx->interface_list;
+
+}
+
+static PyObject *psvmi_system_memory_info(PyObject * self, PyObject * args)
+{
+	struct psvmi_context* ctx = psvmi_get_context(args);
+
+    if (ctx == NULL) return NULL;
+
+    PyObject* meminfo;
+
+	get_system_memory_info(ctx, &meminfo);
+
+    psvmi_release_context(ctx);
+
+	return meminfo;
+}
+
 
 static PyMethodDef PsvmiMethods[] = {
 	{"get_processes", psvmi_get_processes, METH_VARARGS,
 	 "Get the list of running processes."},
 	{"system_info", psvmi_system_info, METH_VARARGS,
 	 "Get system information."},
+	{"system_memory_info", psvmi_system_memory_info, METH_VARARGS,
+	 "Get system memory information."},
+	{"interface_list", psvmi_interface_list, METH_VARARGS,
+	 "Get list of nw infaces with stats"},
+	{"module_list", psvmi_module_list, METH_VARARGS,
+	 "Get list of loaded modules"},
+	{"cpuHw_info", psvmi_cpuHw_info, METH_VARARGS,
+	 "Get cpu hw info- make, model"},
 	{"read_mem_as_text", psvmi_read_mem_as_text, METH_VARARGS,
 	 "Return the printable memory contents at the given range."},
+	//{"get_cpu_hw", psvmi_get_cpu_hw, METH_VARARGS,
+	//"Get hw config of cpu"},
+	{"context_init", psvmi_context_init_wrapper, METH_VARARGS,
+	"initialize psvmi context."},
 	{NULL, NULL, 0, NULL}	/* Sentinel */
 };
 
