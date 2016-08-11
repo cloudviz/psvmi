@@ -3,9 +3,7 @@
 # start a VM that does pretty much nothing: just runs our dummy init() that
 # loops forever
 
-RUNNING_VM=0
-NEW_VM=1
-
+RUNNING_VM=-1
 
 test_crawl()
 {
@@ -16,8 +14,8 @@ test_crawl()
 
     qemu_pid=`ps ax | grep -i qemu | grep "name $vm_name " | grep -v grep |  awk '{print $1}'`
     
-    echo "" ; echo "Starting test" $@ 
-    python2.7 tests/test.py $vm_name $qemu_pid $kernel_version $os_type $arch 
+    echo "" ; echo "Starting test" $@
+    python2.7 tests/test.py $vm_name $qemu_pid $kernel_version $os_type $arch $RUNNING_VM 
 }
 
 create_vm_and_test_crawl()
@@ -49,6 +47,7 @@ create_vm_and_test_crawl()
 if [ $1 == 'RUNNING_VM' ]
 then
     #change the following params to match your running VM
+    RUNNING_VM=1
     test_crawl 'vm2' '3.2.0-101-generic_3.2.0-101.x86_64' 'ubuntu' 'x86_64'
 else
     create_vm_and_test_crawl 'vm2' '4.0.3.x86_64' 'vanilla' 'x86_64'
