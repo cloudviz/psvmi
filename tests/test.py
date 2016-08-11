@@ -8,6 +8,8 @@ _qemu_pid = sys.argv[2]
 _kernel_version = sys.argv[3]
 _distro = sys.argv[4]
 _arch = sys.argv[5]
+RUNNING_VM = sys.argv[6]
+
 
 vm_context = psvmi.context_init(qemu_pid=_qemu_pid, kernel_version=_kernel_version, distro=_distro, arch=_arch)
 
@@ -25,8 +27,9 @@ assert any('lo' in i for i in output)
 output = psvmi.module_iter(vm_context)
 assert len(list(output))>0    
 
-output = psvmi.process_iter(vm_context)
-assert any('psvmi_test_init' in i.name() for i in output)
+if RUNNING_VM is -1:
+    output = psvmi.process_iter(vm_context)
+    assert any('psvmi_test_init' in i.name() for i in output)
 
 for p in psvmi.process_iter(vm_context):
     if p.pid == 0:
@@ -38,6 +41,7 @@ for p in psvmi.process_iter(vm_context):
         assert p.get_memory_percent() > 0
         assert list(p.get_cpu_times())[1] > 0
         assert 'fd=0' in str(p.get_open_files())
+        assert 'devconsole' in str(p.get_open_files())
         
     else:
         assert p.pid > 0

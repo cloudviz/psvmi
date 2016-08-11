@@ -298,7 +298,7 @@ int get_module_list(struct psvmi_context *ctx)
 	const char *module_state_str;
 
     //TODO: maybe free the previous list if creating a new one?
-    if(ctx->module_list == NULL)
+    //if(ctx->module_list == NULL)
             ctx->module_list = PyList_New(0);
 
 	READ_ELEM(ctx, &modules_list, (ctx->sym_addr[MODULES]));
