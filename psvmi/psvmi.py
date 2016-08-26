@@ -678,7 +678,7 @@ def sync_processes(context):
 
     if context is None:
         print("Need to set context first!")
-        return retList
+        return retlist
 
     rawlist = cext.get_processes(context)
 
@@ -724,10 +724,10 @@ def kernel_version_detection(qemu_instance=None, qemu_pid=None):
     string = '' + str
     # version = "no-match"  # unused
     longregex = re.compile("(.{1000}[ubuntu\s[2-3]|el[1-9]].{1000})", re.I)
-    shortregex = re.compile(
-                    "\s([2-3]{1}\.[0-9]{1,3}\."
-                    "[0-9|\-|\.|generic|virtual|server|el|x|amd|_]{1,100})",
-                    re.I)
+    shortregex = re.compile("\s([2-3]{1}\.[0-9]{1,3}\."
+                            "[0-9|\-|\.|generic|virtual|server|el|x|amd|_]"
+                            "{1,100})",
+                            re.I)
     matchObj = re.findall(longregex, string)
     if matchObj:
         for match in matchObj:
