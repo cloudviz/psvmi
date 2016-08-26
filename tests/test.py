@@ -11,7 +11,9 @@ _arch = sys.argv[5]
 RUNNING_VM = sys.argv[6]
 
 
-vm_context = psvmi.context_init(qemu_pid=_qemu_pid, kernel_version=_kernel_version, distro=_distro, arch=_arch)
+vm_context = psvmi.context_init(
+    qemu_pid=_qemu_pid, kernel_version=_kernel_version,
+    distro=_distro, arch=_arch)
 
 output = psvmi.system_info(vm_context)
 assert 'Linux' in output
@@ -25,7 +27,7 @@ output = psvmi.interface_iter(vm_context)
 assert any('lo' in i for i in output)
 
 output = psvmi.module_iter(vm_context)
-assert len(list(output))>0    
+assert len(list(output)) > 0
 
 if RUNNING_VM is -1:
     output = psvmi.process_iter(vm_context)
@@ -34,20 +36,16 @@ if RUNNING_VM is -1:
 for p in psvmi.process_iter(vm_context):
     if p.pid == 0:
         assert 'swapper' in str(p.name())
-    
+
     elif p.name() == 'psvmi_test_init':
         assert p.get_memory_info().rss > 0
-        assert p.get_memory_info().vms > 0 
+        assert p.get_memory_info().vms > 0
         assert p.get_memory_percent() > 0
         assert list(p.get_cpu_times())[1] > 0
         assert 'fd=0' in str(p.get_open_files())
         assert 'devconsole' in str(p.get_open_files())
-        
+
     else:
         assert p.pid > 0
 
 print "Test passed" + str(sys.argv)
-#test_psvmi('<INSTANCE>', '4.0.3.x86_64', 'vanilla', "x86_64")
-#test_psvmi('<INSTANCE>', '3.2.0-101-generic_3.2.0-101.x86_64', 'ubuntu', 'x86_64')
-#test_psvmi('24882', '3.2.0-101-generic_3.2.0-101.x86_64', 'ubuntu', 'x86_64')
-

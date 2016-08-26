@@ -15,17 +15,18 @@ sconn = namedtuple('sconn', 'fd family type laddr raddr status pid')
 sysinfo = namedtuple('OSFeature',
                      '''boottime ipaddr osdistro osname osplatform osrelease
                         ostype osversion''')
-sysmeminfo = namedtuple('MemoryFeature',   
-                        ''' memory_total memory_used memory_buffered memory_cached 
+sysmeminfo = namedtuple('MemoryFeature',
+                        ''' memory_total memory_used memory_buffered memory_cached
                             memory_free''')
 moduleinfo = namedtuple('ModuleFeature', 'name state')
-cpuHwinfo = namedtuple('CpuHwFeature',  
-                        '''cpu_family cpu_vendor cpu_model 
+cpuHwinfo = namedtuple('CpuHwFeature',
+                       '''cpu_family cpu_vendor cpu_model
                            cpu_vendor_id cpu_model_id
                            cpu_khz cpu_cache_size_kb cpu_num_cores''')
-ifaceinfo = namedtuple('InterfaceFeature',   
-                        ''' ifname, bytes_sent, bytes_recv, packets_sent, packets_recv,
+ifaceinfo = namedtuple('InterfaceFeature',
+                       ''' ifname, bytes_sent, bytes_recv, packets_sent, packets_recv,
                             errout, errin''')
+
 
 class pconn(namedtuple('pconn', 'fd family type laddr raddr status')):
     __slots__ = ()
@@ -137,7 +138,7 @@ def qemu_vm_info(qemu_instance=None, qemuPid=None):
 
     if not qemuPid:
         raise Exception("Could not find the VM.")
-    
+
     with open("/proc/" + qemuPid + "/maps") as f:
         for line in f:
             line = line.split()[0].split('-')
@@ -237,18 +238,19 @@ def get_supported_kernel(version, arch="x86_64"):
 
 
 def context_init(qemu_instance=None, qemu_pid=None, kernel_version=None,
-                distro="ubuntu", arch="x86_64"):
+                 distro="ubuntu", arch="x86_64"):
     vm = qemu_vm_info(qemu_instance, qemu_pid)
     sysmaps = kernel_sysmaps(kernel_version, distro, arch)
     offsets = kernel_offsets(kernel_version, distro, arch)
 
     try:
         context = cext.context_init(vm.memDumpFile, vm.numMemChunks,
-                                             vm.qemuPid, vm.qemuVaStart,
-                                             vm.qemuVaEnd, vm.startMemAddr,
-                                             vm.memSize, sysmaps, offsets)
+                                    vm.qemuPid, vm.qemuVaStart,
+                                    vm.qemuVaEnd, vm.startMemAddr,
+                                    vm.memSize, sysmaps, offsets)
     except Exception as e:
-        print("Calling context_init for %s failed with: \"%s\"." % (qemu_instance, e))
+        print("Calling context_init for %s failed with: \"%s\"." %
+              (qemu_instance, e))
         return None
     return context
 
@@ -261,7 +263,7 @@ def interface_iter(context=None):
         for item in cext.interface_list(context):
             yield ifaceinfo._make(item)
 
-    
+
 def module_iter(context=None):
     if context is None:
         print("Need to set context first!")
@@ -273,73 +275,48 @@ def module_iter(context=None):
 
 def cpuHw_info(context=None):
     if context is None:
-	print("Need to set context first!")
+        print("Need to set context first!")
         return None
     else:
         try:
             cpu = cpuHwinfo._make(cext.cpuHw_info(context))
-    
+
         except Exception as e:
-             print("Calling cpu hw info failed with: \"%s\". Most likely "
+            print("Calling cpu hw info failed with: \"%s\". Most likely "
                   "this is not the correct kernel." % (e))
-             return None
+            return None
         return cpu
 
 
-    
 def system_memory_info(context=None):
     if context is None:
-	print("Need to set context first!")
+        print("Need to set context first!")
         return None
     else:
         try:
-            #print context
+            # print context
             mem = sysmeminfo._make(cext.system_memory_info(context))
-    
+
         except Exception as e:
-             print("Calling system_memroy_info failed with: \"%s\". Most likely "
+            print("Calling system_memroy_info failed with: \"%s\". Most likely"
                   "this is not the correct kernel." % (e))
-             return None
+            return None
         return mem
 
 
 def system_info(context=None):
     if context is None:
-	print("Need to set context first!")
+        print("Need to set context first!")
         return None
     else:
         try:
             sys = sysinfo._make(cext.system_info(context))
-    
+
         except Exception as e:
-             print("Calling system_info failed with: \"%s\". Most likely "
+            print("Calling system_info failed with: \"%s\". Most likely "
                   "this is not the correct kernel." % (e))
-             return None
+            return None
         return sys
-
-
-def system_info_deprecated(qemu_instance=None, qemu_pid=None, kernel_version=None,
-                distro="ubuntu", arch="x86_64"):
-    
-    #TODO: possibly integrate with auto version detection?
-    #if kernel_version == None:
-    #ret_list = kernel_version_detection(qemu_instance, qemu_pid)
-    #print "kernel_version_detection says:", ret_list	
-    vm = qemu_vm_info(qemu_instance, qemu_pid)
-
-    sysmaps = kernel_sysmaps(kernel_version, distro, arch)
-    offsets = kernel_offsets(kernel_version, distro, arch)
-    
-    try:
-        sys = sysinfo._make(cext.system_info(vm.memDumpFile, vm.numMemChunks,
-                                             vm.qemuPid, vm.qemuVaStart,
-                                             vm.qemuVaEnd, vm.startMemAddr,
-                                             vm.memSize, sysmaps, offsets))
-    except Exception as e:
-        print("Calling system_info for %s failed with: \"%s\". Most likely "
-              "this is not the correct kernel." % (qemu_instance, e))
-        return None
-    return sys
 
 
 class Error(Exception):
@@ -392,10 +369,11 @@ class AccessDenied(Error):
 # https://code.google.com/p/psutil/source/browse/psutil/__init__.py
 class Process(object):
 
-    def __init__(self, context=None, pid=None, name=None, cmdline=None, exe=None,
-                 create_time=None, cwd=None, ppid=None,
+    def __init__(self, context=None, pid=None, name=None, cmdline=None,
+                 exe=None, create_time=None, cwd=None, ppid=None,
                  username=None, connections=[], openfiles=[],
-                 mem_rss=None, mem_vms=None, status=None, user_system_time=None, overall_cpu_time=None):
+                 mem_rss=None, mem_vms=None, status=None,
+                 user_system_time=None, overall_cpu_time=None):
         self._pid = pid
         self._name = name
         self._exe = exe
@@ -411,8 +389,7 @@ class Process(object):
         self._last_sys_cpu_times = overall_cpu_time
         self._last_proc_cpu_times = user_system_time
         self._ident = (self.pid, self._create_time)
-        #self._status = 'running'
-        self._status = status  
+        self._status = status
         self._mem_rss = mem_rss
         self._mem_vms = mem_vms
         self._psvmi_context = context
@@ -652,7 +629,7 @@ class Process(object):
 
     def get_memory_percent(self):
         sysmem = system_memory_info(self._psvmi_context)
-        return (float(self._mem_rss * 100 ) / (sysmem.memory_total * 1024))
+        return (float(self._mem_rss * 100) / (sysmem.memory_total * 1024))
 
     def memory_maps(self, grouped=True):
         return []
@@ -702,13 +679,18 @@ def sync_processes(context):
     if context is None:
         print("Need to set context first!")
         return retList
-        
+
     rawlist = cext.get_processes(context)
 
     for item in rawlist:
-        pid, name, cmdline, exe, create_time, cwd, ppid, username, connections, openfiles, mem_rss, mem_vms, status, user_system_time , overall_cpu_time = item
+        pid, name, cmdline, exe, create_time, cwd, ppid, username,\
+            connections, openfiles, mem_rss, mem_vms, status,\
+            user_system_time, overall_cpu_time = item
+
         proc = Process(context, pid, name, cmdline, exe, create_time,
-             cwd, ppid, username, connections, openfiles, mem_rss, mem_vms, status, user_system_time, overall_cpu_time) 
+                       cwd, ppid, username, connections, openfiles, mem_rss,
+                       mem_vms, status, user_system_time, overall_cpu_time)
+
         retlist.append(proc)
     return retlist
 
@@ -721,33 +703,6 @@ def process_iter(context=None):
         processes = sync_processes(context)
         for proc in processes:
             yield proc
-
-
-def sync_processes_deprecated(qemu_instance, qemu_pid, kernel_version, distro, arch):
-    vm = qemu_vm_info(qemu_instance, qemu_pid)
-
-    retlist = []
-    rawlist = cext.get_processes(vm.memDumpFile, vm.numMemChunks,
-                                 vm.qemuPid, vm.qemuVaStart,
-                                 vm.qemuVaEnd, vm.startMemAddr,
-                                 vm.memSize,
-                                 kernel_sysmaps(kernel_version, distro, arch),
-                                 kernel_offsets(kernel_version, distro, arch))
-
-    for item in rawlist:
-        pid, name, cmdline, exe, create_time, cwd, ppid, username, connections, openfiles = item
-        proc = Process(pid, name, cmdline, exe, create_time,
-                       cwd, ppid, username, connections, openfiles)
-        retlist.append(proc)
-    return retlist
-
-
-def process_iter_deprecated(qemu_instance=None, qemu_pid=None, kernel_version=None,
-                 distro="ubuntu", arch="x86_64"):
-    processes = sync_processes(
-        qemu_instance, qemu_pid, kernel_version, distro, arch)
-    for proc in processes:
-        yield proc
 
 
 def kernel_version_detection(qemu_instance=None, qemu_pid=None):
@@ -769,16 +724,18 @@ def kernel_version_detection(qemu_instance=None, qemu_pid=None):
     string = '' + str
     # version = "no-match"  # unused
     longregex = re.compile("(.{1000}[ubuntu\s[2-3]|el[1-9]].{1000})", re.I)
-    shortregex = re.compile("\s([2-3]{1}\.[0-9]{1,3}\."
-                            "[0-9|\-|\.|generic|virtual|server|el|x|amd|_]{1,100})", re.I)
+    shortregex = re.compile(
+                    "\s([2-3]{1}\.[0-9]{1,3}\."
+                    "[0-9|\-|\.|generic|virtual|server|el|x|amd|_]{1,100})",
+                    re.I)
     matchObj = re.findall(longregex, string)
     if matchObj:
         for match in matchObj:
             versionObj = re.findall(shortregex, match)
             for v in versionObj:
                 # XXX this only works for ubuntu or redhat kernels
-                if ('el' in v or 'generic' in v or 'virtual' in v
-                        or 'server' in v):
+                if ('el' in v or 'generic' in v or 'virtual' in v or
+                        'server' in v):
                     picked_versions.append(v)
     else:
         print("No match!!")
@@ -823,7 +780,8 @@ def kernel_version_detection(qemu_instance=None, qemu_pid=None):
         if not sys:
             continue
         if (supported_version in sys.osname or picked_version in sys.osname or
-                supported_version in sys.osrelease or picked_version in sys.osrelease):
+                supported_version in sys.osrelease or
+                picked_version in sys.osrelease):
             return [supported_version, arch, distro]
 
     return [None, None, None]
