@@ -5,6 +5,20 @@
 
 RUNNING_VM=-1
 
+create_offset_file()
+{
+    local kernel_version=$1 #4.0.3.x86_64
+
+    wget -nc https://sourceforge.net/projects/psvmi/files/vmlinux-${kernel_version}
+
+    # Only create the offsets file if there is something actually downloaded
+    if [ $? -eq 0 ]
+    then
+        (cd scripts; gdb --batch -x offsets.gdb -s ../vmlinux-${kernel_version} > \
+            ../offsets/vanilla/x86_64/offsets_${kernel_version})
+    fi
+}
+
 test_crawl()
 {
     local vm_name=$1
@@ -42,7 +56,9 @@ create_vm_and_test_crawl()
 	done
 }
 
-
+# Just vmlinux 4.0.3.x86_64 is uploaded at the moment. There is already an offset
+# file for all the other ones.
+create_offset_file 4.0.3.x86_64
 
 if [ $1 == 'RUNNING_VM' ]
 then
