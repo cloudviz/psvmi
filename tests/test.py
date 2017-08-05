@@ -48,4 +48,4 @@ for p in psvmi.process_iter(vm_context):
     else:
         assert p.pid > 0
 
-print "Test passed" + str(sys.argv)
+print("Test passed" + str(sys.argv))
